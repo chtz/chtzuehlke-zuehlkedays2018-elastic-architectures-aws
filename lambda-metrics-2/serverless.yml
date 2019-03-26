@@ -1,0 +1,25 @@
+service: sqs-minute-metrics-2
+provider:
+  name: aws
+  runtime: nodejs8.10
+  environment:
+    AUTOSCALING_GROUP: tuesday-txt2speechASG-BW2STHKREE21
+    QUEUE_NAME: https://sqs.eu-west-1.amazonaws.com/208464084183/tuesday-txt2speechRequestQueue-1K5R61JAZL804
+  memorySize: 128
+  logRetentionInDays: 1
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: 
+        - "autoscaling:*"
+        - "cloudwatch:*"
+      Resource: "*"
+functions:
+  metricspublisher2:
+    handler: handler.metricspublisher2
+    events:
+      - schedule:
+          name: sqs-metrics-publisher-cron-2
+          description: publish SQS metrics every minute
+          rate: rate(1 minute)
+          enabled: true

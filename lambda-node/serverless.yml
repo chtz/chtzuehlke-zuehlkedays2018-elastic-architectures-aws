@@ -1,0 +1,48 @@
+service: txt2speechjs
+provider:
+  name: aws
+  runtime: nodejs8.10
+  environment:
+    RESPONSE_BUCKET:
+      Ref: ResponseBucket
+  memorySize: 128
+  logRetentionInDays: 1
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: 
+        - "s3:PutObject*"
+      Resource: 
+        - Fn::Join:
+          - ''
+          - - Fn::GetAtt: ["ResponseBucket", "Arn"]
+            - "/*"
+    - Effect: "Allow"
+      Action: 
+        - "polly:SynthesizeSpeech"
+      Resource: "*"
+functions:
+  txt2speech:
+    handler: handler.txt2speech
+    events:
+      - sqs:
+          arn: 
+            Fn::GetAtt: ["RequestQueue", "Arn"]
+          batchSize: 1
+resources:
+  Resources:
+    RequestQueue:
+      Type: "AWS::SQS::Queue"
+    ResponseBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        AccessControl: "Private"
+  Outputs:
+    Queue:
+#      Description: "Request Queue"
+      Value:
+        Ref: "RequestQueue"
+    Bucket:
+#      Description: "Response Bucket"
+      Value:
+         Ref: "ResponseBucket"

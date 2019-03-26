@@ -1,0 +1,335 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "txt2speechAutoscalingDemo",
+	"Parameters": {
+		"VPCId": {
+			"Type": "AWS::EC2::VPC::Id"
+		},
+		"SubnetIds": {
+			"Type": "List<AWS::EC2::Subnet::Id>"
+		},
+		"BackendAMI": {
+			"Type": "AWS::EC2::Image::Id",
+			"Description": "Spring Boot Backend AMI"
+		},
+		"SSHKeyname": {
+			"Type": "AWS::EC2::KeyPair::KeyName",
+			"Default": "id_rsa_cht",
+			"Description": "Key for ssh admin access"
+		}
+	},
+	"Outputs": {
+		"Queue": {
+			"Description": "Request Queue",
+			"Value": {
+				"Ref": "txt2speechRequestQueue"
+			}
+		},
+		"Bucket": {
+			"Description": "Response Bucket",
+			"Value": {
+				"Ref": "txt2speechResponseBucket"
+			}
+		}
+	},
+	"Resources": {
+		"txt2speechRequestQueue": {
+			"Type": "AWS::SQS::Queue",
+			"Properties": {
+				"DelaySeconds": "0",
+				"MaximumMessageSize": "262144",
+				"MessageRetentionPeriod": "345600",
+				"ReceiveMessageWaitTimeSeconds": "0",
+				"VisibilityTimeout": "30"
+			}
+		},
+		"txt2speechResponseBucket": {
+			"Type": "AWS::S3::Bucket",
+			"Properties": {
+				"AccessControl": "Private"
+			}
+		},
+		"sshOnlySG": {
+			"Type": "AWS::EC2::SecurityGroup",
+			"Properties": {
+				"GroupDescription": "ssh-only",
+				"VpcId": {
+					"Ref": "VPCId"
+				}
+			}
+		},
+		"sshOnlySGIngress1": {
+			"Type": "AWS::EC2::SecurityGroupIngress",
+			"Properties": {
+				"GroupId": {
+					"Ref": "sshOnlySG"
+				},
+				"IpProtocol": "tcp",
+				"FromPort": "22",
+				"ToPort": "22",
+				"CidrIp": "0.0.0.0/0"
+			}
+		},
+		"sshOnlySGEgress1": {
+			"Type": "AWS::EC2::SecurityGroupEgress",
+			"Properties": {
+				"GroupId": {
+					"Ref": "sshOnlySG"
+				},
+				"IpProtocol": "-1",
+				"CidrIp": "0.0.0.0/0"
+			}
+		},
+		"InstanceRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Principal": {
+								"Service": [
+									"ec2.amazonaws.com"
+								]
+							},
+							"Action": [
+								"sts:AssumeRole"
+							]
+						}
+					]
+				},
+				"Path": "/",
+				"Policies": [
+					{
+						"PolicyName": "ApplicationPolicy",
+						"PolicyDocument": {
+							"Version": "2012-10-17",
+							"Statement": [
+								{
+									"Effect": "Allow",
+									"Action": [
+										"autoscaling:Describe*",
+										"polly:*",
+										"cloudformation:Describe*",
+										"cloudformation:EstimateTemplateCost",
+										"cloudformation:Get*",
+										"cloudformation:List*",
+										"cloudformation:ValidateTemplate",
+										"cloudwatch:*",
+										"logs:CreateLogGroup",
+										"logs:CreateLogStream",
+										"logs:PutLogEvents",
+										"logs:DescribeLogStreams"
+									],
+									"Resource": "*"
+								},
+								{
+									"Effect": "Allow",
+									"Action": [
+										"s3:PutObject*"
+									],
+									"Resource": {
+										"Fn::Join": [
+											"",
+											[
+												{
+													"Fn::GetAtt": [
+														"txt2speechResponseBucket",
+														"Arn"
+													]
+												},
+												"/*"
+											]
+										]
+									}
+								},
+								{
+									"Action": [
+										"sqs:ReceiveMessage",
+										"sqs:DeleteMessage",
+										"sqs:GetQueueAttributes"
+									],
+									"Resource": {
+										"Fn::GetAtt": [
+											"txt2speechRequestQueue",
+											"Arn"
+										]
+									},
+									"Effect": "Allow"
+								}
+							]
+						}
+					}
+				]
+			}
+		},
+		"InstanceProfile": {
+			"Type": "AWS::IAM::InstanceProfile",
+			"Properties": {
+				"Path": "/",
+				"Roles": [
+					{
+						"Ref": "InstanceRole"
+					}
+				]
+			}
+		},
+		"txt2speechLT": {
+			"Type": "AWS::EC2::LaunchTemplate",
+			"Properties": {
+				"LaunchTemplateData": {
+					"IamInstanceProfile": {
+						"Arn": {
+							"Fn::GetAtt": [
+								"InstanceProfile",
+								"Arn"
+							]
+						}
+					},
+					"SecurityGroupIds": [
+						{
+							"Ref": "sshOnlySG"
+						}
+					],
+					"KeyName": {
+						"Ref": "SSHKeyname"
+					},
+					"ImageId": {
+						"Ref": "BackendAMI"
+					},
+					"InstanceType": "t3.nano",
+					"Monitoring" : {
+						"Enabled" : true
+					}
+				}
+			}
+		},
+		"txt2speechASG": {
+			"UpdatePolicy": {
+				"AutoScalingRollingUpdate": {
+					"MinInstancesInService": "1",
+					"MaxBatchSize": "1",
+					"SuspendProcesses": [
+						"HealthCheck",
+						"ReplaceUnhealthy",
+						"AZRebalance",
+						"AlarmNotification",
+						"ScheduledActions"
+					]
+				}
+			},
+			"Type": "AWS::AutoScaling::AutoScalingGroup",
+			"Properties": {
+				"LaunchTemplate": {
+					"LaunchTemplateId": {
+						"Ref": "txt2speechLT"
+					},
+					"Version": {
+						"Fn::GetAtt": [
+							"txt2speechLT",
+							"LatestVersionNumber"
+						]
+					}
+				},
+				"AvailabilityZones": {
+					"Fn::GetAZs": {
+						"Ref": "AWS::Region"
+					}
+				},
+				"Cooldown": "300",
+				"DesiredCapacity": "1",
+				"HealthCheckGracePeriod": "60",
+				"HealthCheckType": "EC2",
+				"MaxSize": "3",
+				"MinSize": "0",
+				"VPCZoneIdentifier": {
+					"Ref": "SubnetIds"
+				},
+				"TerminationPolicies": [
+					"Default"
+				]
+			}
+		},
+		"txt2speechASGScaleDownPolicy": {
+			"Type": "AWS::AutoScaling::ScalingPolicy",
+			"Properties": {
+				"AdjustmentType": "ChangeInCapacity",
+				"PolicyType": "SimpleScaling",
+				"ScalingAdjustment": -1,
+				"AutoScalingGroupName": {
+					"Ref": "txt2speechASG"
+				}
+			}
+		},
+		"txt2speechASGScaleUpPolicy": {
+			"Type": "AWS::AutoScaling::ScalingPolicy",
+			"Properties": {
+				"AdjustmentType": "ChangeInCapacity",
+				"PolicyType": "SimpleScaling",
+				"ScalingAdjustment": 1,
+				"AutoScalingGroupName": {
+					"Ref": "txt2speechASG"
+				}
+			}
+		},
+		"txt2speechQueueScaleDownAlarm": {
+			"Type": "AWS::CloudWatch::Alarm",
+			"Properties": {
+				"ActionsEnabled": "true",
+				"ComparisonOperator": "LessThanOrEqualToThreshold",
+				"EvaluationPeriods": "2",
+				"MetricName": "NumberOfMessagesSent",
+				"Namespace": "AWS/SQS",
+				"Period": "300",
+				"Statistic": "Sum",
+				"Threshold": "-1",
+				"AlarmActions": [
+					{
+						"Ref": "txt2speechASGScaleDownPolicy"
+					}
+				],
+				"Dimensions": [
+					{
+						"Name": "QueueName",
+						"Value": {
+							"Fn::GetAtt": [
+								"txt2speechRequestQueue",
+								"QueueName"
+							]
+						}
+					}
+				]
+			}
+		},
+		"txt2speechQueueScaleUpAlarm": {
+			"Type": "AWS::CloudWatch::Alarm",
+			"Properties": {
+				"ActionsEnabled": "true",
+				"ComparisonOperator": "GreaterThanThreshold",
+				"EvaluationPeriods": "2",
+				"MetricName": "ApproximateNumberOfMessagesVisible",
+				"Namespace": "AWS/SQS",
+				"Period": "300",
+				"Statistic": "Sum",
+				"Threshold": "1000000",
+				"AlarmActions": [
+					{
+						"Ref": "txt2speechASGScaleUpPolicy"
+					}
+				],
+				"Dimensions": [
+					{
+						"Name": "QueueName",
+						"Value": {
+							"Fn::GetAtt": [
+								"txt2speechRequestQueue",
+								"QueueName"
+							]
+						}
+					}
+				]
+			}
+		}
+	}
+}

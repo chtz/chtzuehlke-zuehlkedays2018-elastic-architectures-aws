@@ -1,0 +1,26 @@
+service: sqs-minute-metrics
+provider:
+  name: aws
+  runtime: nodejs8.10
+  environment:
+    SQS_QUEUE: https://sqs.eu-west-1.amazonaws.com/208464084183/tuesday-txt2speechRequestQueue-1K5R61JAZL804
+    METRIC_NAME: ApproximateNumberOfMessages
+    NAMESPACE: SQSPrecision
+  memorySize: 128
+  logRetentionInDays: 1
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: 
+        - "sqs:*"
+        - "cloudwatch:*"
+      Resource: "*"
+functions:
+  metricspublisher:
+    handler: handler.metricspublisher
+    events:
+      - schedule:
+          name: sqs-metrics-publisher-cron
+          description: publish SQS metrics every minute
+          rate: rate(1 minute)
+          enabled: true

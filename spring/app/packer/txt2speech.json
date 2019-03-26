@@ -1,0 +1,41 @@
+{
+	"builders": [
+		{
+			"type": "amazon-ebs",
+			"region": "eu-west-1",
+			"source_ami_filter": {
+				"filters": {
+					"virtualization-type": "hvm",
+					"name": "amzn2-ami-hvm-2.0.20180622.1-x86_64-gp2",
+					"root-device-type": "ebs"
+				},
+				"owners": [
+					"137112412989"
+				],
+				"most_recent": true
+			},
+			"instance_type": "t2.nano",
+			"ssh_username": "ec2-user",
+			"ami_name": "txt2speech {{timestamp}}"
+		}
+	],
+	"provisioners": [
+		{
+			"type": "file",
+			"source": "../target/txt2speech-0.0.1-SNAPSHOT.jar",
+			"destination": "/home/ec2-user/txt2speech-0.0.1-SNAPSHOT.jar"
+		},
+		{
+			"type": "shell",
+			"inline": [
+				"sudo yum -y install java-1.8.0-openjdk.x86_64 awslogs",
+				"chmod +x /home/ec2-user/txt2speech-0.0.1-SNAPSHOT.jar",
+				"sudo ln -s /home/ec2-user/txt2speech-0.0.1-SNAPSHOT.jar /etc/rc.d/init.d/txt2speech",
+				"sudo chkconfig --level 345 txt2speech on",
+				"sudo tee /etc/awslogs/awscli.conf > /dev/null <<EOF\n[plugins]\ncwlogs = cwlogs\n[default]\nregion = eu-west-1\nEOF",
+				"sudo tee -a /etc/awslogs/awslogs.conf > /dev/null <<EOF\n[/var/log/txt2speech]\nfile = /var/log/txt2speech.log\nbuffer_duration = 5000\nlog_stream_name = {instance_id}\ninitial_position = start_of_file\nlog_group_name = /var/log/txt2speech\nEOF",
+				"sudo systemctl enable awslogsd.service"
+			]
+		}
+	]
+}
